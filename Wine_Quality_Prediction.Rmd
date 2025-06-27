@@ -1,0 +1,269 @@
+---
+title: "Final Project DATA 101"
+author: "Saurav Dahal, Bijay Adhikari"
+date: "2024-12-06"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this analysis, we explore the factors that define wine quality, focusing on the intricate balance of acidity, sugar levels, and pH. 
+
+The objective of this project is to develop a predictive model for wine quality, using logistic regression for classification and K-means clustering for exploratory analysis. This prediction is crucial from a business perspective, as it can help wineries, suppliers, and retailers assess and market wines based on quantifiable quality metrics, potentially  improving customer satisfaction and sales. By classifying wine quality based on chemical attributes, this model aims to support quality control in wine production. Logistic regression will allow us to predict high or low wine quality as a binary target,  while K-means clustering will uncover natural groupings in the data based on chemical properties.
+
+# Load required libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(cluster)
+```
+
+# Importing Dataset
+```{r}
+# Load the dataset
+wine <- read.csv("winequality-red.csv")
+head(wine)
+```
+
+# Explorattory Data Analysis
+```{r}
+# View the structure and summary of the data
+str(wine)
+summary(wine)
+```
+
+## Dataset Summary
+
+The dataset contains **1,599 observations** and **12 variables**, capturing chemical properties of red wine and their corresponding quality ratings.
+
+### Key Variables:
+- **fixed.acidity**: Acid content in the wine.
+- **volatile.acidity**: Volatile acid content.
+- **citric.acid**: Citric acid concentration.
+- **residual.sugar**: Residual sugar in g/L.
+- **chlorides**: Salt content.
+- **free.sulfur.dioxide**: Free SO₂ in mg/L.
+- **total.sulfur.dioxide**: Total SO₂ in mg/L.
+- **density**: Wine density.
+- **pH**: Acidity level.
+- **sulphates**: Sulphate concentration.
+- **alcohol**: Alcohol percentage.
+- **quality**: Wine quality score.
+
+### Data Characteristics:
+- The quality variable serves as the target, representing wine quality on a scale from **3 (low)** to **8 (high)**.
+- Features represent continuous chemical measurements, making it suitable for regression or classification modeling.
+
+
+```{r}
+# Check for missing values
+sum(is.na(wine))
+```
+There are no missing values in the data set so there is no need for imputation or handling missing data.
+
+```{r fig.height=10}
+library(gridExtra)
+
+# Check for outliers
+plots <- lapply(names(wine), function(col) {
+  ggplot(wine, aes_string(x = col)) +
+    geom_density(fill = "blue", alpha = 0.5) +
+    labs(title = paste("Density Plot of", col), x = col, y = "Density") +
+    theme_minimal()
+})
+
+# Arrange plots in a grid and increase size
+grid.arrange(grobs = plots, ncol = 3, top = "Density Plots of Wine Attributes", 
+             layout_matrix = matrix(1:length(plots), ncol = 3, byrow = TRUE))
+
+```
+
+The grid of density plots shows the distribution of each attribute in the red wine dataset:
+
+- **Right-skewed features**: Residual sugar, chlorides, free/total sulfur dioxide, and alcohol have most values concentrated at lower ranges, with a few outliers.
+- **Normal-like distributions**: pH and density are centered around their means.
+- **Bimodal/multimodal features**: Volatile acidity, citric acid, and quality exhibit multiple peaks, suggesting distinct subgroups.
+- **Quality**: Peaks at 5, 6, and 7 indicate common quality ratings.
+
+
+```{r}
+# Loading reshape2
+library(reshape2)
+
+# Calculate the correlation matrix
+correlation_matrix <- cor(wine)
+
+# Convert the row and column names of the correlation matrix into a data frame
+correlation_df <- as.data.frame(as.table(correlation_matrix))
+
+# Create the heatmap
+ggplot(correlation_df, aes(Var1, Var2, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Freq, 2)), color = "black", size = 3) + # Add values
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1, 1), space = "Lab",
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Correlation Matrix of Wine Attributes",
+       x = "Attributes",
+       y = "Attributes")
+
+```
+
+The correlation matrix heatmap illustrates the relationships between red wine attributes, with key values highlighted:
+
+- **Strong positive correlations**:
+  - `density` with `residual.sugar` (0.84) and `total.sulfur.dioxide` (0.67).
+  - `citric.acid` with `fixed.acidity` (0.67).
+
+- **Strong negative correlations**:
+  - `pH` with `fixed.acidity` (-0.68) and `citric.acid` (-0.54).
+  - `volatile.acidity` with `citric.acid` (-0.55).
+
+- **Quality correlations**:
+  - Positively correlated with `alcohol` (0.48).
+  - Negatively correlated with `volatile.acidity` (-0.39).
+
+
+# Research Questions
+## 1. Can logistic regression accurately classify wine quality (e.g., high vs. low) based on chemical attributes?
+## 2. Which chemical attributes (e.g., alcohol content, acidity) are the most significant predictors of wine quality?
+```{r}
+# Making the quality variable as numeric (0 = "low", 1 = "high")
+wine$quality_binary <- ifelse(wine$quality >= 6, 1, 0)
+
+# Split into training and testing sets
+set.seed(123)
+train_index <- sample(1:nrow(wine), 0.8 * nrow(wine))
+train <- wine[train_index, ]
+test <- wine[-train_index, ]
+
+# Train logistic regression model
+log_model <- glm(quality_binary ~ . -quality -quality_binary, data = train, family = "binomial")
+
+# Summary of the model
+summary(log_model)
+```
+
+The most significant predictors of wine quality are:
+
+Alcohol: Positive impact on quality (strongest predictor, p < 0.001).
+Volatile Acidity: Negative impact on quality (p < 0.001).
+Sulphates: Positive impact on quality (p < 0.001).
+Total Sulfur Dioxide: Negative impact on quality (p < 0.001).
+Chlorides: Negative impact on quality (p < 0.05).
+Free Sulfur Dioxide: Positive impact on quality (p < 0.05).
+These attributes play a critical role in predicting high or low wine quality.
+
+
+```{r}
+# Predict on the test set
+test$predicted <- predict(log_model, newdata = test, type = "response")
+test$predicted_class <- ifelse(test$predicted > 0.5, 1, 0)  # Numeric 1 for "high" and 0 for "low"
+
+# Confusion matrix and evaluation metrics
+library(caret)
+conf_matrix <- confusionMatrix(as.factor(test$predicted_class), as.factor(test$quality_binary))
+print(conf_matrix)
+
+```
+
+## Logistic Regression Model Evaluation
+- **Accuracy**: 73.75%
+- **Sensitivity (True Positive Rate)**: 77.50%  
+  - The model correctly identifies 77.5% of "low quality" wines.
+- **Specificity (True Negative Rate)**: 70.00%  
+  - The model correctly identifies 70.0% of "high quality" wines.
+
+### Interpretation of Sensitivity vs. Specificity
+- **Sensitivity (77.50%)** is higher than **Specificity (70.00%)**:
+  - The model is better at identifying "low quality" wines compared to "high quality" wines.
+
+### Importance:
+- **Sensitivity**: It is crucial for quality control, since it helps avoid low-quality wines being misclassified as high-quality.
+- **Specificity**: It is important for marketing high-quality wines, since it ensures high-quality wines are correctly identified.
+
+Given the balanced accuracy (73.75%), the model performs reasonably well but could be improved with further feature selection or tuning.
+
+## Answer:
+
+Based on the logistic regression summary and model evaluation, the model demonstrates a reasonable ability to classify wine quality (high vs. low) based on chemical attributes. The overall accuracy is **73.75%**, indicating that approximately 74% of predictions are correct. The model shows higher performance in identifying "low quality" wines, with a **Sensitivity of 77.50%**, compared to identifying "high quality" wines, with a **Specificity of 70.00%**.
+
+Significant predictors of wine quality include **alcohol**, **volatile acidity**, **sulphates**, **total sulfur dioxide**, and **chlorides**, which strongly influence the binary classification. These attributes highlight the chemical characteristics most associated with high or low wine quality, demonstrating the model's ability to leverage meaningful features.
+
+While the model achieves a good balance between sensitivity and specificity, it performs better at detecting "low quality" wines, which is beneficial for quality control processes. However, the slightly lower specificity indicates room for improvement in correctly identifying "high quality" wines. Additional feature engineering or model tuning could enhance accuracy and specificity.
+
+In conclusion, our logistic regression model can reasonably classify wine quality with a **balanced accuracy of 73.75%**. While the current model is effective, further refinements could improve its classification performance, specifically for high-quality wines.
+
+## 3. How can K-means clustering help identify distinct segments or groups of wines with similar chemical profiles?
+```{r}
+# Standardizing the data
+scaled_data <- scale(wine[, sapply(wine, is.numeric)])
+
+# Determine optimal number of clusters using the Elbow method
+set.seed(123)
+wss <- sapply(1:10, function(k) kmeans(scaled_data, centers = k, nstart = 10)$tot.withinss)
+plot(1:10, wss, type = "b", pch = 19, frame = FALSE,
+     xlab = "Number of Clusters", ylab = "Total Within-Cluster Sum of Squares",
+     main = "Elbow Method for Optimal Clusters")
+
+# Apply K-means with 3 clusters
+set.seed(123)
+kmeans_model <- kmeans(scaled_data, centers = 3, nstart = 10)
+
+# Add cluster labels to the dataset
+wine$cluster <- as.factor(kmeans_model$cluster)
+
+# Visualize clusters
+ggplot(wine, aes(x = alcohol, y = volatile.acidity, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "K-Means Clustering: Alcohol vs Volatile Acidity",
+       x = "Alcohol", y = "Volatile Acidity")
+
+```
+
+K-means clustering helps identify distinct segments of wines with similar chemical profiles by grouping them based on **alcohol content** and **volatile acidity**, as shown in the graph:
+
+- **Cluster 1 (Red)**: Wines with **low alcohol content** (9–11%) and **high volatile acidity** (above 0.7). These are likely lower-quality wines due to unfavorable chemical profiles.
+
+- **Cluster 2 (Green)**: Wines with **moderate alcohol content** (10–12%) and **moderate volatile acidity** (0.4–0.8). These wines represent a balanced segment, likely of average quality.
+
+- **Cluster 3 (Blue)**: Wines with **high alcohol content** (12–14%) and **low volatile acidity** (below 0.6). These wines have desirable profiles, associated with higher quality.
+
+
+### How Can the Predictive Model Assist Wineries in Quality Control and Decision-Making?
+
+The predictive model assists wineries in the following ways:
+
+1. **Quality Control**:
+   - High sensitivity (77.50%) ensures effective identification of low-quality wines for intervention.
+
+2. **Identifying Key Drivers**:
+   - Significant predictors like **alcohol**, **volatile acidity**, **sulphates**, **chlorides**, and **total sulfur dioxide** guide production adjustments to improve quality.
+
+3. **Segmenting Wines**:
+   - K-means clustering identifies three segments:
+     - **Cluster 1**: Likely lower-quality wines.
+     - **Cluster 2**: Balanced, average-quality wines.
+     - **Cluster 3**: Higher-quality wines.
+   - This information helps in targeting specific markets and creating tailored blends.
+
+4. **Market Strategy**:
+   - Getting insights on chemical profiles enable better positioning of premium wines and alignment with consumer preferences.
+
+The model supports **quality control**, **optimized production**, and **data-driven marketing decisions** for consistent product quality.
+
+# Conclusion
+This project explored the factors influencing wine quality, using logistic regression and K-means clustering to analyze chemical attributes and classify wine quality effectively. The logistic regression model demonstrated reasonable accuracy (73.75%) and identified key predictors like alcohol, volatile acidity, and sulphates as significant factors. While the model excels at detecting low-quality wines, slight improvements in feature engineering or tuning could enhance its ability to identify high-quality wines.
+
+K-means clustering provided valuable insights by segmenting wines into distinct groups based on chemical profiles, aiding wineries in quality control and market positioning. For example, wines with high alcohol and low acidity were identified as likely higher quality, offering actionable strategies for production adjustments and targeted marketing.
+
+Finally, the combination of predictive modeling and clustering supports data-driven decision-making, helping wineries improve quality, satisfy customers, and optimize their market strategies. With further refinement, this approach can become a robust tool for the wine industry.
